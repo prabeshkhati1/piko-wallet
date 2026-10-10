@@ -1,0 +1,33 @@
+name: Build Piko Wallet for Botkeep
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo build --release --locked
+      - name: Package Botkeep release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/piko-wallet
+          cp target/release/piko-wallet release/piko-wallet/
+          cp -R static release/piko-wallet/
+          cp DEPLOY.md NOTICE.md LICENSE release/piko-wallet/
+          tar -C release -czf piko-wallet-linux-x86_64.tar.gz piko-wallet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piko-wallet-linux-x86_64
+          path: piko-wallet-linux-x86_64.tar.gz
+      - if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: piko-wallet-linux-x86_64.tar.gz

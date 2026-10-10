@@ -1,0 +1,42 @@
+const {chromium}=require('playwright');
+const AxeBuilder=require('@axe-core/playwright').default;
+const fs=require('fs');
+const assert=require('node:assert/strict');
+const path=require('path');
+
+const ROOT=require('node:path').resolve(__dirname,'..');
+const WORK=process.env.PIKO_TEST_WORKDIR||require('node:path').resolve(ROOT,'../../work/piko-validation');
+(async()=>{
+ const browser=await chromium.launch({headless:true});
+ const context=await browser.newContext({viewport:{width:1440,height:1000}});
+ const page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const origin=(process.env.PIKO_TEST_URL||'http://127.0.0.1:33942');await page.goto(origin);await page.waitForSelector('#auth-form');
+ const status=await (await context.request.get(origin+'/api/auth/status')).json();
+ await page.getByLabel(status.configured?'Password':'Create a password',{exact:true}).fill('piko-preview-password-2026');await page.getByRole('button',{name:status.configured?'Unlock wallet':'Create my wallet',exact:true}).click();
+ await page.waitForSelector('.layout');if(await page.locator('#sheet').evaluate(el=>el.open))await page.getByRole('button',{name:'Close',exact:true}).click();
+ let state=await (await context.request.get(origin+'/api/state')).json();
+ const backup=JSON.parse(fs.readFileSync(require('node:path').join(WORK,'demo-backup.json'),'utf8'));
+ const restore=await context.request.post(origin+'/api/import/piko',{headers:{Origin:origin,'If-Match':String(state.data.revision)},data:backup});assert.equal(restore.status(),200);
+ await page.reload();await page.waitForSelector('.wallet-grid');await page.evaluate(()=>document.fonts.ready);
+ const out=path.join(ROOT,'previews');fs.mkdirSync(out,{recursive:true});
+ await page.screenshot({path:path.join(out,'desktop.png'),fullPage:true});
+ const axe=await new AxeBuilder({page}).analyze();
+ fs.writeFileSync(require('node:path').join(WORK,'accessibility.json'),JSON.stringify(axe.violations.map(v=>({id:v.id,impact:v.impact,description:v.description,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})),null,2));
+ const results=[];
+ for(const name of ['Wallets','Transactions','Planned payments','Budgets','Reports','Loans','Categories','Settings']){await page.locator('.sidebar').getByRole('button',{name,exact:true}).click();await page.waitForTimeout(100);assert.equal(await page.locator('.main h1').innerText(),name);console.log('STEP');results.push(name+' screen rendered');}
+ await page.locator('.sidebar').getByRole('button',{name:'Transactions',exact:true}).click();await page.getByPlaceholder('Search transactions or tags').fill('coffee');assert.equal(await page.locator('.transaction').count(),1);assert.match(await page.locator('.transaction').innerText(),/Morning coffee/);results.push('Search filters transactions');
+ await page.getByPlaceholder('Search transactions or tags').fill('');await page.getByRole('button',{name:'Add',exact:true}).click();await page.getByLabel('Title',{exact:true}).fill('Browser test expense');await page.getByLabel('Amount · USD',{exact:true}).fill('12.34');await page.getByRole('button',{name:'Save',exact:true}).click();await page.waitForSelector('#sheet:not([open])',{state:'attached'});assert.match(await page.locator('.main').innerText(),/Browser test expense/);results.push('Transaction form saves to server');
+ const tx=page.locator('.transaction').filter({hasText:'Browser test expense'});await tx.click();await page.getByLabel('Amount · USD',{exact:true}).fill('15.67');await page.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForSelector('#sheet:not([open])',{state:'attached'});assert.match(await page.locator('.main').innerText(),/15.67/);results.push('Transaction edits update the ledger');
+ await page.locator('.transaction').filter({hasText:'Browser test expense'}).click();await page.getByRole('button',{name:'Delete',exact:true}).click();await page.getByRole('button',{name:'Delete record',exact:true}).click();await page.waitForSelector('#sheet:not([open])',{state:'attached'});assert.equal(await page.locator('.transaction').filter({hasText:'Browser test expense'}).count(),0);results.push('Transaction deletion confirmed and persisted');
+ await page.locator('.sidebar').getByRole('button',{name:'Overview',exact:true}).click();
+ await page.setViewportSize({width:390,height:844});await page.waitForTimeout(4100);await page.screenshot({path:path.join(out,'iphone-light.png')});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);results.push('390px iPhone layout has no horizontal overflow');
+ await page.getByRole('button',{name:'Toggle theme',exact:true}).click();await page.screenshot({path:path.join(out,'iphone-dark.png')});results.push('Dark theme works');
+ await page.getByRole('button',{name:'Add transaction or payment',exact:true}).click();await page.getByRole('button',{name:/Planned payment A bill/}).click();assert.equal(await page.locator('#sheet').evaluate(el=>el.open),true);await page.getByRole('button',{name:'Close',exact:true}).click();results.push('Mobile add sheet and payment form work');
+ await page.getByRole('button',{name:'More',exact:true}).click();await page.getByRole('button',{name:'Reports',exact:true}).click();assert.equal(await page.locator('.main h1').innerText(),'Reports');results.push('Mobile navigation works');
+ await context.setOffline(true);await page.reload();await page.getByText('Your wallet is',{exact:false}).waitFor();assert.match(await page.locator('body').innerText(),/Reconnect and reload/);results.push('Offline shell loads without exposing cached financial data');await context.setOffline(false);await page.reload();await page.waitForSelector('.layout');
+ await page.getByRole('button',{name:'Settings',exact:true}).click();await page.getByRole('button',{name:'Lock wallet',exact:true}).click();await page.waitForSelector('#auth-form');results.push('Lock returns to password screen');
+ assert.deepEqual(errors,[]);results.push('No browser JavaScript errors');
+ fs.writeFileSync(require('node:path').join(WORK,'browser-results.json'),JSON.stringify({results,accessibilityViolations:axe.violations.length},null,2));
+ console.log(JSON.stringify({results,accessibilityViolations:axe.violations.map(v=>({id:v.id,impact:v.impact,nodes:v.nodes.length}))},null,2));await browser.close();
+})().catch(e=>{console.error(e);process.exit(1);});

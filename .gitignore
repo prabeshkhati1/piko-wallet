@@ -1,0 +1,11 @@
+/target/
+/data/
+.env
+*.db
+*.db-shm
+*.db-wal
+/test-results/
+/node_modules/
+
+/piko-wallet
+

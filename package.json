@@ -1,0 +1,14 @@
+{
+  "name": "piko-wallet-validation",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "test:api": "node tests/api.mjs",
+    "test:browser": "node tests/run-browser.cjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "playwright": "1.64.0"
+  }
+}
